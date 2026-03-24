@@ -1,0 +1,22 @@
+{
+  "name": "@agiterra/exchange-ipc",
+  "version": "0.1.0",
+  "description": "Exchange IPC \u2014 Ed25519 signed messaging and webhook validator",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./validator": "./src/validator.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "dependencies": {
+    "@agiterra/exchange-tools": "file:../exchange-tools"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "license": "MIT",
+  "author": "Tim Garthwaite <https://github.com/mividtim>"
+}
