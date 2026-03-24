@@ -1,7 +1,7 @@
 {
-  "name": "@agiterra/exchange-ipc",
+  "name": "@agiterra/exchange-ipc-tools",
   "version": "0.1.0",
-  "description": "Exchange IPC \u2014 Ed25519 signed messaging and webhook validator",
+  "description": "Exchange IPC tools \u2014 Ed25519 signed messaging, webhook validator, and channel handler",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {

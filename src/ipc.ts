@@ -4,7 +4,7 @@
  * Uses signBody from @agiterra/exchange-tools for Ed25519 signing.
  */
 
-import { signBody } from "../../exchange-tools/src/crypto.js";
+import { signBody } from "@agiterra/exchange-tools";
 
 export async function registerIpcWebhook(
   url: string,

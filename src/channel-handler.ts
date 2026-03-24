@@ -6,7 +6,7 @@
  * no client-side re-verification needed.
  */
 
-import type { ChannelHandler, ChannelResult } from "../../exchange-tools/src/connection.js";
+import type { ChannelHandler, ChannelResult } from "@agiterra/exchange-tools";
 
 /**
  * Create an IPC channel handler.
