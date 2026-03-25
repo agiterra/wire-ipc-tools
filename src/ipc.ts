@@ -1,10 +1,10 @@
 /**
  * IPC helpers — webhook registration and signed message sending.
  *
- * Uses signBody from @agiterra/exchange-tools for Ed25519 signing.
+ * Uses signBody from @agiterra/wire-tools for Ed25519 signing.
  */
 
-import { signBody } from "@agiterra/exchange-tools";
+import { signBody } from "@agiterra/wire-tools";
 
 export async function registerIpcWebhook(
   url: string,
@@ -42,7 +42,7 @@ export async function sendSignedMessage(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Exchange-Signature": signature,
+      "X-Wire-Signature": signature,
     },
     body: bodyStr,
   });

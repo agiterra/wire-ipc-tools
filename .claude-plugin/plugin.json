@@ -1,11 +1,11 @@
 {
-  "name": "exchange-ipc-tools",
+  "name": "wire-ipc-tools",
   "version": "0.1.0",
-  "description": "Exchange IPC tools — Ed25519 signed messaging, webhook validator, and channel handler",
+  "description": "Wire IPC tools — Ed25519 signed messaging, webhook validator, and channel handler",
   "author": {
     "name": "Tim Garthwaite",
     "url": "https://github.com/mividtim"
   },
   "license": "MIT",
-  "keywords": ["exchange", "ipc", "ed25519", "webhook", "messaging", "channels"]
+  "keywords": ["wire", "ipc", "ed25519", "webhook", "messaging", "channels"]
 }

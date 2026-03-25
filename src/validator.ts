@@ -16,7 +16,7 @@
  * VM context: (headers, body, secrets, crypto, directory, rawBody)
  */
 export const IPC_VALIDATOR = `
-const sig = headers['x-exchange-signature'];
+const sig = headers['x-wire-signature'];
 if (!sig) throw new Error('missing signature');
 
 const parsed = typeof body === 'string' ? JSON.parse(body) : body;

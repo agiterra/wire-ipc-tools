@@ -1,12 +1,12 @@
 /**
- * IPC channel handler for ExchangeConnection.
+ * IPC channel handler for WireConnection.
  *
- * Processes raw Exchange events from the IPC webhook. Uses the
+ * Processes raw Wire events from the IPC webhook. Uses the
  * validator_result (verified sender identity) passed through from the server —
  * no client-side re-verification needed.
  */
 
-import type { ChannelHandler, ChannelResult } from "@agiterra/exchange-tools";
+import type { ChannelHandler, ChannelResult } from "@agiterra/wire-tools";
 
 /**
  * Create an IPC channel handler.
