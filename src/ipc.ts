@@ -1,10 +1,8 @@
 /**
- * IPC helpers — webhook registration and signed message sending.
- *
- * Uses signBody from @agiterra/wire-tools for Ed25519 signing.
+ * IPC helpers — webhook registration and JWT-authenticated message sending.
  */
 
-import { signBody } from "@agiterra/wire-tools";
+import { createJwt, hashBody, type JwtClaims } from "./jwt.js";
 
 export async function registerIpcWebhook(
   url: string,
@@ -31,18 +29,25 @@ export async function sendSignedMessage(
   payload: unknown,
   dest?: string,
 ): Promise<{ seq: number }> {
-  const body: Record<string, unknown> = { source: agentId, topic, payload };
-  if (dest) body.dest = dest;
-
   const targetAgent = dest ?? agentId;
-  const bodyStr = JSON.stringify(body);
-  const signature = await signBody(privateKey, bodyStr);
+  const bodyStr = JSON.stringify(payload);
+  const body_hash = await hashBody(bodyStr);
+
+  const claims: JwtClaims = {
+    iss: agentId,
+    iat: Math.floor(Date.now() / 1000),
+    topic,
+    body_hash,
+  };
+  if (dest) claims.dest = dest;
+
+  const token = await createJwt(privateKey, claims);
 
   const res = await fetch(`${url}/webhooks/${targetAgent}/ipc`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Wire-Signature": signature,
+      Authorization: `Bearer ${token}`,
     },
     body: bodyStr,
   });
