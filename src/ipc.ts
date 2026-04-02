@@ -1,25 +1,8 @@
 /**
- * IPC helpers — webhook registration and JWT-authenticated message sending.
+ * IPC helpers — JWT-authenticated message sending.
  */
 
 import { createJwt, hashBody, type JwtClaims } from "./jwt.js";
-
-export async function registerIpcWebhook(
-  url: string,
-  agentId: string,
-  validator: string,
-): Promise<void> {
-  const res = await fetch(`${url}/agents/${agentId}/webhooks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plugin: "ipc", validator }),
-  });
-  if (!res.ok) {
-    throw new Error(
-      `IPC webhook registration failed (${res.status}): ${await res.text()}`,
-    );
-  }
-}
 
 export async function sendSignedMessage(
   url: string,
@@ -36,14 +19,12 @@ export async function sendSignedMessage(
   const claims: JwtClaims = {
     iss: agentId,
     iat: Math.floor(Date.now() / 1000),
-    topic,
     body_hash,
   };
-  if (dest) claims.dest = dest;
 
   const token = await createJwt(privateKey, claims);
 
-  const res = await fetch(`${url}/webhooks/${targetAgent}/ipc`, {
+  const res = await fetch(`${url}/webhooks/${targetAgent}/${topic}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

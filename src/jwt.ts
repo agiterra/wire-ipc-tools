@@ -1,15 +1,12 @@
 /**
  * Minimal JWT (EdDSA/Ed25519) — no external dependencies.
  *
- * Used by IPC messaging to replace custom X-Wire-Signature header
- * with standard Authorization: Bearer <JWT>.
+ * Used for Authorization: Bearer <JWT> across all Wire endpoints.
  */
 
 export type JwtClaims = {
   iss: string;        // sender agent ID
   iat: number;        // issued-at (unix seconds)
-  topic: string;      // routing topic
-  dest?: string;      // destination agent ID (unicast)
   body_hash: string;  // SHA-256 hex of request body
 };
 
