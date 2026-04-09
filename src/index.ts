@@ -1,2 +1,1 @@
-export { sendSignedMessage } from "./ipc.js";
-export { createJwt, verifyJwt, hashBody, type JwtClaims } from "./jwt.js";
+export { IPC_VALIDATOR } from "./validator.js";
