@@ -1,7 +1,7 @@
 {
   "name": "@agiterra/wire-ipc-tools",
-  "version": "0.4.0",
-  "description": "Wire IPC tools \u2014 Ed25519 signed messaging, webhook validator, and channel handler",
+  "version": "1.0.0",
+  "description": "Wire IPC tools — Ed25519 signed messaging, webhook validator, and channel handler",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -12,7 +12,8 @@
     "src/"
   ],
   "dependencies": {
-    "@agiterra/wire-tools": "file:../wire-tools"
+    "@agiterra/wire-tools": "file:../wire-tools",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "bun-types": "latest"
