@@ -46,23 +46,33 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "send_message",
-      description: "Send an Ed25519-signed IPC message via The Wire",
+      description:
+        "Send an Ed25519-signed IPC message via The Wire.\n" +
+        "Schema: { topic, payload, dest? }.\n" +
+        "Example (unicast to another agent):\n" +
+        "  { topic: 'ipc', dest: 'fondant', payload: { text: 'hello' } }\n" +
+        "Example (broadcast on a topic):\n" +
+        "  { topic: 'ipc.task', payload: { kind: 'help', text: '...' } }\n" +
+        "DO NOT pass `to`, `from`, `subject`, or `body` as top-level keys — " +
+        "the recipient is `dest`, and the message content (any shape: text, " +
+        "object, etc.) goes INSIDE `payload`.",
       inputSchema: {
         type: "object" as const,
         properties: {
           topic: {
             type: "string",
-            description: "Routing topic (e.g. 'ipc', 'ipc.task')",
+            description: "Required. Routing topic (e.g. 'ipc', 'ipc.task'). Determines which channel/plugin receives the message.",
           },
           payload: {
-            description: "Message payload (any JSON value)",
+            description: "Required. Message content as any JSON value (object, string, null, etc.). Put your subject/body/text fields INSIDE this — never as top-level keys.",
           },
           dest: {
             type: "string",
-            description: "Optional unicast destination agent ID",
+            description: "Optional. Recipient agent ID for unicast (e.g. 'fondant', 'brioche'). Omit for broadcast on `topic`. NOT to be confused with a `to` field.",
           },
         },
         required: ["topic", "payload"],
+        additionalProperties: false,
       },
     },
   ],
