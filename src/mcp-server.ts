@@ -70,11 +70,40 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (req.params.name === "send_message") {
-    const { topic, payload, dest } = req.params.arguments as {
-      topic: string;
-      payload: unknown;
-      dest?: string;
-    };
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+    const topic = args.topic;
+    const payload = args.payload;
+    const dest = args.dest;
+
+    // Reject malformed calls explicitly. Without this, undefined topic gets
+    // url-interpolated into /broadcast/undefined and a null payload sails through.
+    if (typeof topic !== "string" || topic.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: `send_message: 'topic' is required (string). Got: ${JSON.stringify(topic)}. Did you pass 'subject' or 'to' instead? Schema: { topic, payload, dest? }.` }],
+        isError: true,
+      };
+    }
+    if (payload === undefined) {
+      return {
+        content: [{ type: "text" as const, text: `send_message: 'payload' is required (any JSON value, including null). Did you pass 'body' instead? Schema: { topic, payload, dest? }.` }],
+        isError: true,
+      };
+    }
+    if (dest !== undefined && typeof dest !== "string") {
+      return {
+        content: [{ type: "text" as const, text: `send_message: 'dest' must be a string if provided. Got: ${JSON.stringify(dest)}.` }],
+        isError: true,
+      };
+    }
+    const knownKeys = new Set(["topic", "payload", "dest"]);
+    const extras = Object.keys(args).filter((k) => !knownKeys.has(k));
+    if (extras.length > 0) {
+      return {
+        content: [{ type: "text" as const, text: `send_message: unknown argument(s) ${extras.join(", ")}. Schema: { topic, payload, dest? }. Did you mean payload?` }],
+        isError: true,
+      };
+    }
+
     try {
       if (!keyPair) throw new Error("not initialized");
       const { seq } = await sendSignedMessage(
@@ -82,8 +111,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         AGENT_ID,
         keyPair.privateKey,
         topic,
-        payload ?? null,
-        dest,
+        payload,
+        dest as string | undefined,
       );
       return {
         content: [{ type: "text" as const, text: `sent seq=${seq}` }],
