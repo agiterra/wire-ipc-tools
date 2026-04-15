@@ -8,7 +8,8 @@
  * Config env vars:
  *   WIRE_URL            default http://localhost:9800
  *   AGENT_ID            required or auto-generated
- *   AGENT_NAME           display name (for registration)
+ *   AGENT_NAME          display name (for registration)
+ *   AGENT_PRIVATE_KEY   Ed25519 PKCS8 base64 (required for sending)
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -142,11 +143,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 // --- Main ---
 
 export async function startServer(): Promise<void> {
-  // Load agent key (base64 PKCS8). Crew-launched agents get their own key
-  // via CREW_PRIVATE_KEY which takes precedence over .env's WIRE_PRIVATE_KEY.
-  const rawKey = process.env.CREW_PRIVATE_KEY ?? process.env.WIRE_PRIVATE_KEY;
+  const rawKey = process.env.AGENT_PRIVATE_KEY;
   if (!rawKey) {
-    console.error("[wire-ipc] WIRE_PRIVATE_KEY not set — IPC sending disabled");
+    console.error("[wire-ipc] AGENT_PRIVATE_KEY not set — IPC sending disabled");
   } else {
     keyPair = await importKeyPair(rawKey);
   }
