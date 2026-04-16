@@ -18,7 +18,19 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { sendSignedMessage, importKeyPair, type KeyPair } from "@agiterra/wire-tools";
+import {
+  sendSignedMessage,
+  importKeyPair,
+  generateKeyPair,
+  exportPrivateKey,
+  derivePublicKeyB64,
+  register,
+  type KeyPair,
+} from "@agiterra/wire-tools";
+
+function titleCase(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 const WIRE_URL = process.env.WIRE_URL ?? "http://localhost:9800";
 const AGENT_ID =
@@ -45,6 +57,35 @@ const mcp = new Server(
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    {
+      name: "register_agent",
+      description:
+        "Sponsor-register a new Wire agent. Generates an Ed25519 keypair, " +
+        "registers the public key on Wire using the caller's identity as " +
+        "the sponsor, and returns the base64 PKCS8 private key ready to " +
+        "pass to crew `agent_launch` as `env.AGENT_PRIVATE_KEY`.\n\n" +
+        "Typical flow:\n" +
+        "  const { agent_id, display_name, private_key_b64 } = await register_agent({ id: 'danish' });\n" +
+        "  await agent_launch({ env: { AGENT_ID: agent_id, AGENT_NAME: display_name, AGENT_PRIVATE_KEY: private_key_b64, ... } });\n\n" +
+        "Keys never touch disk — they flow through the spawned agent's env. " +
+        "The sponsor's AGENT_PRIVATE_KEY signs the registration request; " +
+        "Wire trusts the sponsor's JWT and accepts the new agent's public key.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          id: {
+            type: "string",
+            description: "New agent's ID (the name it will register under and use as `env.AGENT_ID`).",
+          },
+          display_name: {
+            type: "string",
+            description: "Optional display name. Defaults to TitleCase(id).",
+          },
+        },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
     {
       name: "send_message",
       description:
@@ -80,6 +121,51 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (req.params.name === "register_agent") {
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+    const id = args.id;
+    const displayName = args.display_name;
+
+    if (typeof id !== "string" || id.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: `register_agent: 'id' is required (string). Got: ${JSON.stringify(id)}.` }],
+        isError: true,
+      };
+    }
+    if (displayName !== undefined && typeof displayName !== "string") {
+      return {
+        content: [{ type: "text" as const, text: `register_agent: 'display_name' must be a string if provided. Got: ${JSON.stringify(displayName)}.` }],
+        isError: true,
+      };
+    }
+    if (!keyPair) {
+      return {
+        content: [{ type: "text" as const, text: `register_agent: sponsor not initialized. Set AGENT_PRIVATE_KEY in the caller's env.` }],
+        isError: true,
+      };
+    }
+
+    try {
+      const kp = await generateKeyPair();
+      const privB64 = await exportPrivateKey(kp.privateKey);
+      const pubB64 = await derivePublicKeyB64(kp.privateKey);
+      const resolvedName = displayName ?? titleCase(id);
+      await register(WIRE_URL, AGENT_ID, id, resolvedName, pubB64, keyPair.privateKey);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({
+          agent_id: id,
+          display_name: resolvedName,
+          private_key_b64: privB64,
+        }) }],
+      };
+    } catch (e: any) {
+      return {
+        content: [{ type: "text" as const, text: `register failed: ${e.message}` }],
+        isError: true,
+      };
+    }
+  }
+
   if (req.params.name === "send_message") {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     const topic = args.topic;
