@@ -69,7 +69,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         "  await agent_launch({ env: { AGENT_ID: agent_id, AGENT_NAME: display_name, AGENT_PRIVATE_KEY: private_key_b64, ... } });\n\n" +
         "Keys never touch disk — they flow through the spawned agent's env. " +
         "The sponsor's AGENT_PRIVATE_KEY signs the registration request; " +
-        "Wire trusts the sponsor's JWT and accepts the new agent's public key.",
+        "Wire trusts the sponsor's JWT and accepts the new agent's public key.\n\n" +
+        "If an agent with this id already exists (live or reaped) the call fails " +
+        "with HTTP 409 `agent_exists_pubkey_mismatch` to prevent silently rotating " +
+        "the keypair out from under any process still holding the previous key. " +
+        "Pass `force_rotate: true` to override — but only when you've confirmed no " +
+        "running process still holds the old key (the orphan-reaper will SIGTERM " +
+        "stuck wire-channel processes shortly after their parent CC dies; wait for " +
+        "that to land before forcing rotation).",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -80,6 +87,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           display_name: {
             type: "string",
             description: "Optional display name. Defaults to TitleCase(id).",
+          },
+          force_rotate: {
+            type: "boolean",
+            description: "Default false. When true, replaces the keypair on an existing/reaped agent — permanently locking out any process still holding the previous private key. Use only when you've confirmed no live process holds the old key.",
           },
         },
         required: ["id"],
@@ -125,6 +136,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     const id = args.id;
     const displayName = args.display_name;
+    const forceRotate = args.force_rotate;
 
     if (typeof id !== "string" || id.length === 0) {
       return {
@@ -135,6 +147,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (displayName !== undefined && typeof displayName !== "string") {
       return {
         content: [{ type: "text" as const, text: `register_agent: 'display_name' must be a string if provided. Got: ${JSON.stringify(displayName)}.` }],
+        isError: true,
+      };
+    }
+    if (forceRotate !== undefined && typeof forceRotate !== "boolean") {
+      return {
+        content: [{ type: "text" as const, text: `register_agent: 'force_rotate' must be a boolean if provided. Got: ${JSON.stringify(forceRotate)}.` }],
         isError: true,
       };
     }
@@ -150,7 +168,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const privB64 = await exportPrivateKey(kp.privateKey);
       const pubB64 = await derivePublicKeyB64(kp.privateKey);
       const resolvedName = displayName ?? titleCase(id);
-      await register(WIRE_URL, AGENT_ID, id, resolvedName, pubB64, keyPair.privateKey);
+      await register(
+        WIRE_URL,
+        AGENT_ID,
+        id,
+        resolvedName,
+        pubB64,
+        keyPair.privateKey,
+        forceRotate ? { force_rotate: true } : undefined,
+      );
       return {
         content: [{ type: "text" as const, text: JSON.stringify({
           agent_id: id,
