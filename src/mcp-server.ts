@@ -186,47 +186,63 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     try {
       const resolvedName = displayName ?? titleCase(id);
 
-      // Mode 2: BYO pubkey — skip keypair generation. Caller already
-      // has the private key (re-registration of a stashed ephemeral,
-      // client-managed keys, etc.).
-      if (providedPubkey) {
-        await register(
-          WIRE_URL,
-          AGENT_ID,
-          id,
-          resolvedName,
-          providedPubkey,
-          keyPair.privateKey,
-          forceRotate ? { force_rotate: true } : undefined,
-        );
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify({
-            agent_id: id,
-            display_name: resolvedName,
-            pubkey: providedPubkey,
-          }) }],
-        };
+      // Smart-refresh: when no pubkey was supplied and force_rotate isn't
+      // requested, probe Wire for an existing row at this id. If found,
+      // re-register with the existing pubkey — Wire's reaped-readmission
+      // path un-greys the row and the live agent process (which still
+      // holds the matching private key) keeps working.
+      //
+      // Per Tim 2026-05-15: "If the Wire has the pub key in hand, then
+      // brioche should just be able to re-register eclair2 without sending
+      // the pub key, and The Wire should just mark her as active."
+      let pubkeyToRegister = providedPubkey as string | undefined;
+      let returnPrivate: string | undefined;
+      let didLookup = false;
+
+      if (!pubkeyToRegister && !forceRotate) {
+        try {
+          const res = await fetch(`${WIRE_URL}/agents?kind=all`);
+          if (res.ok) {
+            const all = (await res.json()) as Array<{ id: string; pubkey: string }>;
+            const existing = all.find((a) => a.id === id);
+            if (existing) {
+              pubkeyToRegister = existing.pubkey;
+              didLookup = true;
+            }
+          }
+        } catch {
+          // Network blip — fall through to keypair generation. Worst case
+          // is a pubkey mismatch error from /agents/register downstream,
+          // which surfaces clearly to the caller.
+        }
       }
 
-      // Mode 1: generate a fresh keypair, return the private key.
-      const kp = await generateKeyPair();
-      const privB64 = await exportPrivateKey(kp.privateKey);
-      const pubB64 = await derivePublicKeyB64(kp.privateKey);
+      // Still no pubkey → mint a fresh keypair, return the private key.
+      if (!pubkeyToRegister) {
+        const kp = await generateKeyPair();
+        returnPrivate = await exportPrivateKey(kp.privateKey);
+        pubkeyToRegister = await derivePublicKeyB64(kp.privateKey);
+      }
+
       await register(
         WIRE_URL,
         AGENT_ID,
         id,
         resolvedName,
-        pubB64,
+        pubkeyToRegister,
         keyPair.privateKey,
         forceRotate ? { force_rotate: true } : undefined,
       );
+
+      const response: Record<string, string> = {
+        agent_id: id,
+        display_name: resolvedName,
+        pubkey: pubkeyToRegister,
+      };
+      if (returnPrivate) response.private_key_b64 = returnPrivate;
+      if (didLookup) response.mode = "refresh-existing";
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({
-          agent_id: id,
-          display_name: resolvedName,
-          private_key_b64: privB64,
-        }) }],
+        content: [{ type: "text" as const, text: JSON.stringify(response) }],
       };
     } catch (e: any) {
       return {
