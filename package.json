@@ -12,7 +12,7 @@
     "src/"
   ],
   "dependencies": {
-    "@agiterra/wire-tools": "agiterra/wire-tools#v2.2.0",
+    "@agiterra/wire-tools": "agiterra/wire-tools#v2.3.5",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {

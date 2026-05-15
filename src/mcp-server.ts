@@ -60,23 +60,32 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "register_agent",
       description:
-        "Sponsor-register a new Wire agent. Generates an Ed25519 keypair, " +
-        "registers the public key on Wire using the caller's identity as " +
-        "the sponsor, and returns the base64 PKCS8 private key ready to " +
-        "pass to crew `agent_launch` as `env.AGENT_PRIVATE_KEY`.\n\n" +
-        "Typical flow:\n" +
+        "Sponsor-register a Wire agent. Two modes:\n\n" +
+        "  (1) Default: generates a fresh Ed25519 keypair, registers the " +
+        "public key on Wire as `id` using the caller's identity as sponsor, " +
+        "and returns the base64 PKCS8 private key for the caller to pass on " +
+        "to crew `agent_launch` as `env.AGENT_PRIVATE_KEY`.\n\n" +
+        "  (2) BYO pubkey: pass `pubkey` (base64 raw Ed25519, 32 bytes) and " +
+        "the call skips keypair generation. Returns no private_key_b64 — the " +
+        "caller already has the private key. Useful for re-registering a " +
+        "previously-reaped ephemeral when you've kept its keypair around, or " +
+        "for callers who manage keys client-side. Wire's existing auth path " +
+        "handles reaped-readmission (same id + same pubkey → un-greyed).\n\n" +
+        "Typical mode-1 flow:\n" +
         "  const { agent_id, display_name, private_key_b64 } = await register_agent({ id: 'danish' });\n" +
-        "  await agent_launch({ env: { AGENT_ID: agent_id, AGENT_NAME: display_name, AGENT_PRIVATE_KEY: private_key_b64, ... } });\n\n" +
-        "Keys never touch disk — they flow through the spawned agent's env. " +
-        "The sponsor's AGENT_PRIVATE_KEY signs the registration request; " +
-        "Wire trusts the sponsor's JWT and accepts the new agent's public key.\n\n" +
-        "If an agent with this id already exists (live or reaped) the call fails " +
-        "with HTTP 409 `agent_exists_pubkey_mismatch` to prevent silently rotating " +
-        "the keypair out from under any process still holding the previous key. " +
-        "Pass `force_rotate: true` to override — but only when you've confirmed no " +
-        "running process still holds the old key (the orphan-reaper will SIGTERM " +
-        "stuck wire-channel processes shortly after their parent CC dies; wait for " +
-        "that to land before forcing rotation).",
+        "  await agent_launch({ env: { AGENT_ID: agent_id, AGENT_PRIVATE_KEY: private_key_b64, ... } });\n\n" +
+        "Typical mode-2 flow (re-register a reaped agent):\n" +
+        "  await register_agent({ id: 'danish', pubkey: '<stashed-base64-pubkey>' });\n" +
+        "  await agent_launch({ env: { AGENT_ID: 'danish', AGENT_PRIVATE_KEY: '<stashed-base64-privkey>', ... } });\n\n" +
+        "Keys never touch disk inside this tool — they flow through env. The " +
+        "sponsor's AGENT_PRIVATE_KEY signs the registration request; Wire " +
+        "trusts the sponsor's JWT and accepts the new (or re-registered) " +
+        "agent's public key.\n\n" +
+        "If an agent with this id already exists with a DIFFERENT pubkey the " +
+        "call fails with HTTP 409 `agent_exists_pubkey_mismatch` to prevent " +
+        "silently rotating the keypair out from under any process still " +
+        "holding the previous key. Pass `force_rotate: true` to override — " +
+        "but only when you've confirmed no live process holds the old key.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -87,6 +96,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           display_name: {
             type: "string",
             description: "Optional display name. Defaults to TitleCase(id).",
+          },
+          pubkey: {
+            type: "string",
+            description: "Optional. Base64 raw Ed25519 public key (32 bytes). When supplied, the tool skips keypair generation and registers this pubkey on Wire as `id`. Returns no private_key_b64. Use for re-registering a previously-reaped ephemeral whose keypair you've stashed, or for client-side key management.",
           },
           force_rotate: {
             type: "boolean",
@@ -137,6 +150,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const id = args.id;
     const displayName = args.display_name;
     const forceRotate = args.force_rotate;
+    const providedPubkey = args.pubkey;
 
     if (typeof id !== "string" || id.length === 0) {
       return {
@@ -156,6 +170,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         isError: true,
       };
     }
+    if (providedPubkey !== undefined && typeof providedPubkey !== "string") {
+      return {
+        content: [{ type: "text" as const, text: `register_agent: 'pubkey' must be a base64 string if provided. Got: ${JSON.stringify(providedPubkey)}.` }],
+        isError: true,
+      };
+    }
     if (!keyPair) {
       return {
         content: [{ type: "text" as const, text: `register_agent: sponsor not initialized. Set AGENT_PRIVATE_KEY in the caller's env.` }],
@@ -164,10 +184,34 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     try {
+      const resolvedName = displayName ?? titleCase(id);
+
+      // Mode 2: BYO pubkey — skip keypair generation. Caller already
+      // has the private key (re-registration of a stashed ephemeral,
+      // client-managed keys, etc.).
+      if (providedPubkey) {
+        await register(
+          WIRE_URL,
+          AGENT_ID,
+          id,
+          resolvedName,
+          providedPubkey,
+          keyPair.privateKey,
+          forceRotate ? { force_rotate: true } : undefined,
+        );
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({
+            agent_id: id,
+            display_name: resolvedName,
+            pubkey: providedPubkey,
+          }) }],
+        };
+      }
+
+      // Mode 1: generate a fresh keypair, return the private key.
       const kp = await generateKeyPair();
       const privB64 = await exportPrivateKey(kp.privateKey);
       const pubB64 = await derivePublicKeyB64(kp.privateKey);
-      const resolvedName = displayName ?? titleCase(id);
       await register(
         WIRE_URL,
         AGENT_ID,
