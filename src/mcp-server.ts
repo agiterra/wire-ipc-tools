@@ -15,6 +15,15 @@
  *   AGENT_ID            required or auto-generated
  *   AGENT_NAME          display name
  *   AGENT_PRIVATE_KEY   Ed25519 PKCS8 base64 (required for sending)
+ *
+ * Exports for consolidation (bridge-claude-code et al.):
+ *   - WIRE_IPC_TOOLS — the tool definitions array (for ListTools concatenation)
+ *   - handleWireIpcToolCall — handler dispatch function (for CallTool routing)
+ *   - WireIpcDeps — the deps shape (wire_url + agent_id + key_pair)
+ *
+ * startServer remains a thin wrapper that builds deps from env and runs its
+ * own MCP Server. Standalone wire-ipc-claude-code and wire-ipc-codex
+ * adapters keep working unchanged.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -29,132 +38,171 @@ import {
   type KeyPair,
 } from "@agiterra/wire-tools";
 
-const WIRE_URL = process.env.WIRE_URL ?? "http://localhost:9800";
-const AGENT_ID =
-  process.env.AGENT_ID ?? `claude-${crypto.randomUUID().slice(0, 8)}`;
+// --- Public types + tool definitions ---
 
-let keyPair: KeyPair | null = null;
+export interface WireIpcDeps {
+  wire_url: string;
+  agent_id: string;
+  key_pair: KeyPair | null;
+}
 
-// --- MCP server ---
+export interface ToolCallResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
 
-const mcp = new Server(
-  { name: "wire-ipc", version: "0.2.0" },
+export const WIRE_IPC_TOOLS = [
   {
-    capabilities: { tools: {} },
-    instructions:
-      "This plugin provides IPC messaging via The Wire. " +
-      "Use the send_message tool to send Ed25519-signed messages to other agents. " +
-      "Messages are routed through the Wire message broker. " +
-      "Agent registration is handled by the `wire` plugin (mcp__plugin_wire_wire__register_agent), not this one.",
-  },
-);
-
-// --- Tools ---
-
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "send_message",
-      description:
-        "Send an Ed25519-signed IPC message via The Wire.\n" +
-        "Schema: { topic, payload, dest? }.\n" +
-        "Example (unicast to another agent):\n" +
-        "  { topic: 'ipc', dest: 'fondant', payload: { text: 'hello' } }\n" +
-        "Example (broadcast on a topic):\n" +
-        "  { topic: 'ipc.task', payload: { kind: 'help', text: '...' } }\n" +
-        "DO NOT pass `to`, `from`, `subject`, or `body` as top-level keys — " +
-        "the recipient is `dest`, and the message content (any shape: text, " +
-        "object, etc.) goes INSIDE `payload`.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          topic: {
-            type: "string",
-            description: "Required. Routing topic (e.g. 'ipc', 'ipc.task'). Determines which channel/plugin receives the message.",
-          },
-          payload: {
-            description: "Required. Message content as any JSON value (object, string, null, etc.). Put your subject/body/text fields INSIDE this — never as top-level keys.",
-          },
-          dest: {
-            type: "string",
-            description: "Optional. Recipient agent ID for unicast (e.g. 'fondant', 'brioche'). Omit for broadcast on `topic`. NOT to be confused with a `to` field.",
-          },
+    name: "send_message",
+    description:
+      "Send an Ed25519-signed IPC message via The Wire.\n" +
+      "Schema: { topic, payload, dest? }.\n" +
+      "Example (unicast to another agent):\n" +
+      "  { topic: 'ipc', dest: 'fondant', payload: { text: 'hello' } }\n" +
+      "Example (broadcast on a topic):\n" +
+      "  { topic: 'ipc.task', payload: { kind: 'help', text: '...' } }\n" +
+      "DO NOT pass `to`, `from`, `subject`, or `body` as top-level keys — " +
+      "the recipient is `dest`, and the message content (any shape: text, " +
+      "object, etc.) goes INSIDE `payload`.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        topic: {
+          type: "string",
+          description:
+            "Required. Routing topic (e.g. 'ipc', 'ipc.task'). Determines which channel/plugin receives the message.",
         },
-        required: ["topic", "payload"],
-        additionalProperties: false,
+        payload: {
+          description:
+            "Required. Message content as any JSON value (object, string, null, etc.). Put your subject/body/text fields INSIDE this — never as top-level keys.",
+        },
+        dest: {
+          type: "string",
+          description:
+            "Optional. Recipient agent ID for unicast (e.g. 'fondant', 'brioche'). Omit for broadcast on `topic`. NOT to be confused with a `to` field.",
+        },
       },
+      required: ["topic", "payload"],
+      additionalProperties: false,
     },
-  ],
-}));
+  },
+] as const;
 
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  if (req.params.name === "send_message") {
-    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-    const topic = args.topic;
-    const payload = args.payload;
-    const dest = args.dest;
-
-    if (typeof topic !== "string" || topic.length === 0) {
-      return {
-        content: [{ type: "text" as const, text: `send_message: 'topic' is required (string). Got: ${JSON.stringify(topic)}. Did you pass 'subject' or 'to' instead? Schema: { topic, payload, dest? }.` }],
-        isError: true,
-      };
-    }
-    if (payload === undefined) {
-      return {
-        content: [{ type: "text" as const, text: `send_message: 'payload' is required (any JSON value, including null). Did you pass 'body' instead? Schema: { topic, payload, dest? }.` }],
-        isError: true,
-      };
-    }
-    if (dest !== undefined && typeof dest !== "string") {
-      return {
-        content: [{ type: "text" as const, text: `send_message: 'dest' must be a string if provided. Got: ${JSON.stringify(dest)}.` }],
-        isError: true,
-      };
-    }
-    const knownKeys = new Set(["topic", "payload", "dest"]);
-    const extras = Object.keys(args).filter((k) => !knownKeys.has(k));
-    if (extras.length > 0) {
-      return {
-        content: [{ type: "text" as const, text: `send_message: unknown argument(s) ${extras.join(", ")}. Schema: { topic, payload, dest? }. Did you mean payload?` }],
-        isError: true,
-      };
-    }
-
-    try {
-      if (!keyPair) throw new Error("not initialized");
-      const { seq } = await sendSignedMessage(
-        WIRE_URL,
-        AGENT_ID,
-        keyPair.privateKey,
-        topic,
-        payload,
-        dest as string | undefined,
-      );
-      return {
-        content: [{ type: "text" as const, text: `sent seq=${seq}` }],
-      };
-    } catch (e: any) {
-      return {
-        content: [
-          { type: "text" as const, text: `send failed: ${e.message}` },
-        ],
-        isError: true,
-      };
-    }
+export async function handleWireIpcToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  deps: WireIpcDeps,
+): Promise<ToolCallResult> {
+  if (name !== "send_message") {
+    throw new Error(`wire-ipc: unknown tool: ${name}`);
   }
-  throw new Error(`unknown tool: ${req.params.name}`);
-});
 
-// --- Main ---
+  const topic = args.topic;
+  const payload = args.payload;
+  const dest = args.dest;
+
+  if (typeof topic !== "string" || topic.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: 'topic' is required (string). Got: ${JSON.stringify(topic)}. Did you pass 'subject' or 'to' instead? Schema: { topic, payload, dest? }.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (payload === undefined) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: 'payload' is required (any JSON value, including null). Did you pass 'body' instead? Schema: { topic, payload, dest? }.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (dest !== undefined && typeof dest !== "string") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: 'dest' must be a string if provided. Got: ${JSON.stringify(dest)}.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  const knownKeys = new Set(["topic", "payload", "dest"]);
+  const extras = Object.keys(args).filter((k) => !knownKeys.has(k));
+  if (extras.length > 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: unknown argument(s) ${extras.join(", ")}. Schema: { topic, payload, dest? }. Did you mean payload?`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  try {
+    if (!deps.key_pair) throw new Error("not initialized (AGENT_PRIVATE_KEY missing)");
+    const { seq } = await sendSignedMessage(
+      deps.wire_url,
+      deps.agent_id,
+      deps.key_pair.privateKey,
+      topic,
+      payload,
+      dest as string | undefined,
+    );
+    return { content: [{ type: "text", text: `sent seq=${seq}` }] };
+  } catch (e) {
+    return {
+      content: [{ type: "text", text: `send failed: ${(e as Error).message}` }],
+      isError: true,
+    };
+  }
+}
+
+// --- Standalone server (existing entry point — unchanged behavior) ---
 
 export async function startServer(): Promise<void> {
+  const WIRE_URL = process.env.WIRE_URL ?? "http://localhost:9800";
+  const AGENT_ID = process.env.AGENT_ID ?? `claude-${crypto.randomUUID().slice(0, 8)}`;
   const rawKey = process.env.AGENT_PRIVATE_KEY;
+
+  let key_pair: KeyPair | null = null;
   if (!rawKey) {
     console.error("[wire-ipc] AGENT_PRIVATE_KEY not set — IPC sending disabled");
   } else {
-    keyPair = await importKeyPair(rawKey);
+    key_pair = await importKeyPair(rawKey);
   }
+
+  const deps: WireIpcDeps = { wire_url: WIRE_URL, agent_id: AGENT_ID, key_pair };
+
+  const mcp = new Server(
+    { name: "wire-ipc", version: "0.2.0" },
+    {
+      capabilities: { tools: {} },
+      instructions:
+        "This plugin provides IPC messaging via The Wire. " +
+        "Use the send_message tool to send Ed25519-signed messages to other agents. " +
+        "Messages are routed through the Wire message broker. " +
+        "Agent registration is handled by the `wire` plugin (mcp__plugin_wire_wire__register_agent), not this one.",
+    },
+  );
+
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [...WIRE_IPC_TOOLS],
+  }));
+
+  mcp.setRequestHandler(CallToolRequestSchema, async (req): Promise<any> => {
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+    return handleWireIpcToolCall(req.params.name, args, deps);
+  });
 
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
