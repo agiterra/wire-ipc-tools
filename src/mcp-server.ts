@@ -56,11 +56,14 @@ export const WIRE_IPC_TOOLS = [
     name: "send_message",
     description:
       "Send an Ed25519-signed IPC message via The Wire.\n" +
-      "Schema: { topic, payload, dest? }.\n" +
+      "Schema: { topic, payload, dest? OR broadcast: true }.\n" +
+      "EXACTLY ONE of `dest` (unicast) or `broadcast: true` (broadcast) is required. " +
+      "Omitting both is rejected — broadcast must be explicit so accidental fan-out " +
+      "is caught at the source rather than spamming every topic subscriber.\n" +
       "Example (unicast to another agent):\n" +
       "  { topic: 'ipc', dest: 'fondant', payload: { text: 'hello' } }\n" +
       "Example (broadcast on a topic):\n" +
-      "  { topic: 'ipc.task', payload: { kind: 'help', text: '...' } }\n" +
+      "  { topic: 'ipc.task', broadcast: true, payload: { kind: 'help', text: '...' } }\n" +
       "DO NOT pass `to`, `from`, `subject`, or `body` as top-level keys — " +
       "the recipient is `dest`, and the message content (any shape: text, " +
       "object, etc.) goes INSIDE `payload`.",
@@ -79,7 +82,12 @@ export const WIRE_IPC_TOOLS = [
         dest: {
           type: "string",
           description:
-            "Optional. Recipient agent ID for unicast (e.g. 'fondant', 'brioche'). Omit for broadcast on `topic`. NOT to be confused with a `to` field.",
+            "Recipient agent ID for unicast (e.g. 'fondant', 'brioche'). Either this OR `broadcast: true` is required. NOT to be confused with a `to` field.",
+        },
+        broadcast: {
+          type: "boolean",
+          description:
+            "Set to `true` for an explicit broadcast (fan-out to every subscriber of `topic`). Mutually exclusive with `dest`. Either this OR `dest` is required — omitting both is rejected.",
         },
       },
       required: ["topic", "payload"],
@@ -100,13 +108,14 @@ export async function handleWireIpcToolCall(
   const topic = args.topic;
   const payload = args.payload;
   const dest = args.dest;
+  const broadcast = args.broadcast;
 
   if (typeof topic !== "string" || topic.length === 0) {
     return {
       content: [
         {
           type: "text",
-          text: `send_message: 'topic' is required (string). Got: ${JSON.stringify(topic)}. Did you pass 'subject' or 'to' instead? Schema: { topic, payload, dest? }.`,
+          text: `send_message: 'topic' is required (string). Got: ${JSON.stringify(topic)}. Did you pass 'subject' or 'to' instead? Schema: { topic, payload, dest? OR broadcast: true }.`,
         },
       ],
       isError: true,
@@ -117,7 +126,7 @@ export async function handleWireIpcToolCall(
       content: [
         {
           type: "text",
-          text: `send_message: 'payload' is required (any JSON value, including null). Did you pass 'body' instead? Schema: { topic, payload, dest? }.`,
+          text: `send_message: 'payload' is required (any JSON value, including null). Did you pass 'body' instead? Schema: { topic, payload, dest? OR broadcast: true }.`,
         },
       ],
       isError: true,
@@ -134,14 +143,49 @@ export async function handleWireIpcToolCall(
       isError: true,
     };
   }
-  const knownKeys = new Set(["topic", "payload", "dest"]);
+  if (broadcast !== undefined && typeof broadcast !== "boolean") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: 'broadcast' must be a boolean if provided. Got: ${JSON.stringify(broadcast)}.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  const hasDest = typeof dest === "string" && dest.length > 0;
+  const isBroadcast = broadcast === true;
+  if (hasDest && isBroadcast) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: 'dest' and 'broadcast: true' are mutually exclusive — choose one. Unicast: { dest: 'agent-id' }. Broadcast: { broadcast: true }.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (!hasDest && !isBroadcast) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `send_message: must specify either 'dest' (unicast) or 'broadcast: true' (broadcast to topic subscribers). Omitting both is rejected so accidental fan-out is caught at the source.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  const knownKeys = new Set(["topic", "payload", "dest", "broadcast"]);
   const extras = Object.keys(args).filter((k) => !knownKeys.has(k));
   if (extras.length > 0) {
     return {
       content: [
         {
           type: "text",
-          text: `send_message: unknown argument(s) ${extras.join(", ")}. Schema: { topic, payload, dest? }. Did you mean payload?`,
+          text: `send_message: unknown argument(s) ${extras.join(", ")}. Schema: { topic, payload, dest? OR broadcast: true }. Did you mean payload?`,
         },
       ],
       isError: true,
@@ -156,9 +200,9 @@ export async function handleWireIpcToolCall(
       deps.key_pair.privateKey,
       topic,
       payload,
-      dest as string | undefined,
+      isBroadcast ? undefined : (dest as string),
     );
-    return { content: [{ type: "text", text: `sent seq=${seq}` }] };
+    return { content: [{ type: "text", text: `sent seq=${seq} (${isBroadcast ? "broadcast" : "to " + dest})` }] };
   } catch (e) {
     return {
       content: [{ type: "text", text: `send failed: ${(e as Error).message}` }],
