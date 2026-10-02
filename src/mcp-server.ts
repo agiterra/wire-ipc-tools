@@ -37,7 +37,7 @@ import {
   importKeyPair,
   type KeyPair,
 } from "@agiterra/wire-tools";
-import { payloadProse, steReport, steToolGuidance } from "@agiterra/wire-tools/ste-lint";
+import { steReport, steToolGuidance } from "@agiterra/wire-tools/ste-lint";
 
 // --- Public types + tool definitions ---
 
@@ -205,7 +205,7 @@ export async function handleWireIpcToolCall(
       isBroadcast ? undefined : (dest as string),
     );
     // AGI-154: warn-only STE lint of the prose AFTER the send. steReport never throws; "" when clean.
-    const ste = topic.startsWith("ipc") ? steReport(payloadProse(payload), { mode: "strict" }) : "";
+    const ste = topic.startsWith("ipc") ? steReport([payload], { mode: "strict" }) : "";
     return { content: [{ type: "text", text: `sent seq=${seq} (${isBroadcast ? "broadcast" : "to " + dest})${ste}` }] };
   } catch (e) {
     return {
