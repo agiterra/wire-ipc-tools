@@ -37,6 +37,7 @@ import {
   importKeyPair,
   type KeyPair,
 } from "@agiterra/wire-tools";
+import { payloadProse, steReport, steToolGuidance } from "@agiterra/wire-tools/ste-lint";
 
 // --- Public types + tool definitions ---
 
@@ -66,7 +67,8 @@ export const WIRE_IPC_TOOLS = [
       "  { topic: 'ipc.task', broadcast: true, payload: { kind: 'help', text: '...' } }\n" +
       "DO NOT pass `to`, `from`, `subject`, or `body` as top-level keys — " +
       "the recipient is `dest`, and the message content (any shape: text, " +
-      "object, etc.) goes INSIDE `payload`.",
+      "object, etc.) goes INSIDE `payload`.\n" +
+      "On an `ipc*` topic: " + steToolGuidance("strict"),
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -202,7 +204,9 @@ export async function handleWireIpcToolCall(
       payload,
       isBroadcast ? undefined : (dest as string),
     );
-    return { content: [{ type: "text", text: `sent seq=${seq} (${isBroadcast ? "broadcast" : "to " + dest})` }] };
+    // AGI-154: warn-only STE lint of the prose AFTER the send. steReport never throws; "" when clean.
+    const ste = topic.startsWith("ipc") ? steReport(payloadProse(payload), { mode: "strict" }) : "";
+    return { content: [{ type: "text", text: `sent seq=${seq} (${isBroadcast ? "broadcast" : "to " + dest})${ste}` }] };
   } catch (e) {
     return {
       content: [{ type: "text", text: `send failed: ${(e as Error).message}` }],
