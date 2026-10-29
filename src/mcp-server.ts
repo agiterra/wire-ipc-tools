@@ -193,6 +193,26 @@ export async function handleWireIpcToolCall(
       isError: true,
     };
   }
+  // An RpcResponder sends its reply on rpc.reply_topic, default "rpc.reply". Both channel feeds drop
+  // rpc.reply, so a hand-built request with that topic (or none) loses its answer silently, while the
+  // delivery log still says "ok" (eng-2374, 2026-10-29). Refuse before the send.
+  const rpc = topic === "rpc.request" && payload !== null && typeof payload === "object"
+    ? (payload as Record<string, unknown>).rpc
+    : undefined;
+  if (rpc !== null && typeof rpc === "object") {
+    const replyTopic = (rpc as Record<string, unknown>).reply_topic;
+    if (replyTopic === undefined || replyTopic === "rpc.reply") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `send_message: rpc.request with reply_topic ${replyTopic === undefined ? "absent (defaults to 'rpc.reply')" : "'rpc.reply'"} — the reply is DROPPED by every channel feed, so you would never see it. Set payload.rpc.reply_topic to "ipc". Nothing was sent.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
 
   try {
     if (!deps.key_pair) throw new Error("not initialized (AGENT_PRIVATE_KEY missing)");
