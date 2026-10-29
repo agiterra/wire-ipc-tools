@@ -69,3 +69,36 @@ describe("send_message STE lint (AGI-154)", () => {
     expect(WIRE_IPC_TOOLS[0].description).toContain("20 words or fewer");
   });
 });
+
+describe("send_message refuses an rpc.request whose reply is dropped", () => {
+  const rpcReq = (rpc: Record<string, unknown>) =>
+    handleWireIpcToolCall("send_message", { topic: "rpc.request", dest: "x", payload: { rpc: { id: "1", reply_to: "test-agent", ...rpc }, method: "m", params: {} } }, deps);
+
+  test("reply_topic 'rpc.reply': refused, nothing sent", async () => {
+    const before = received.length;
+    const r = await rpcReq({ reply_topic: "rpc.reply" });
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('Set payload.rpc.reply_topic to "ipc"');
+    expect(received.length).toBe(before);
+  });
+
+  test("reply_topic absent: refused, nothing sent", async () => {
+    const before = received.length;
+    const r = await rpcReq({});
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("absent");
+    expect(received.length).toBe(before);
+  });
+
+  test("reply_topic 'ipc': sent", async () => {
+    const before = received.length;
+    const r = await rpcReq({ reply_topic: "ipc" });
+    expect(text(r)).toMatch(/^sent seq=\d+ \(to x\)$/);
+    expect(received.length).toBe(before + 1);
+  });
+
+  test("rpc.reply_topic on another topic is not checked", async () => {
+    const r = await handleWireIpcToolCall("send_message", { topic: "ipc.task", dest: "x", payload: { rpc: { reply_topic: "rpc.reply" } } }, deps);
+    expect(r.isError).toBeUndefined();
+  });
+});
